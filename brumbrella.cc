@@ -11,6 +11,7 @@
  */
 #include <cstdio> 
 #include <cstdlib> 
+#include <unistd.h> 
 #include <vector>
 #include <string>
 #include <cmath>

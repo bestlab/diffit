@@ -4,8 +4,8 @@ TARGETS=brumbrella thist diffit propagators
 #CFLAGS= 
 #LDFLAGS=-lgsl -lgslcblas
 # bigmac
-CFLAGS=-I$(HOME)/include
-LDFLAGS=-lgsl -L$(HOME)/lib -lgsl -lgslcblas
+CFLAGS=-I/opt/local/include
+LDFLAGS=-lgsl -L/opt/local/lib -lgsl -lgslcblas
 OPT=-O3
 
 all: $(TARGETS)
