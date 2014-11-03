@@ -1,0 +1,16 @@
+
+brumbrella.cc		: 1D BD simulation code, on bistable potential,
+			: with optional umbrella potential
+
+diff_model.cc		: utilities for fitting 1D diffusive models
+diff_model.h		: utilities for fitting 1D diffusive models
+
+diffit.cc		: master code for 1D diffusive fits
+
+thist.cc		: code for constructing transition matrices "oven-ready"
+			: for input to diffit
+
+test_umbrella.csh	: a helpful example
+
+
+
