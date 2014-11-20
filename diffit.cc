@@ -3,6 +3,7 @@
  */
 
 #define VERBOSE
+#define GLOBALMOVES
 
 #include <cstdio> 
 #include <cstdlib> 
@@ -23,7 +24,7 @@
 using namespace std;
 
 void parse_cmd(const int largc, char **largv, double& D0,
-		double &dD, double &dF, double &stiffness, int &nsteps, int &nprint, 
+		double &dD, double &dF, double &stiffness, double &relative_stiffness, int &nsteps, int &nprint, 
 		string &outp_name, vector<string> &mat_files, string &restart_file,
 		string &restart_save_file, string &propagator_file,
 		bool &pbc, int &seed, double &T1, double &T0, const char *usage)
@@ -36,6 +37,7 @@ void parse_cmd(const int largc, char **largv, double& D0,
 	nsteps = 10000;			// number of mc steps
 	nprint = 100;			// frq for writing output
 	stiffness = -1.0;		// i.e. no stiffness
+	relative_stiffness = -1.0;		// i.e. no relative stiffness
 	outp_name = "default.dat";
 	restart_file = "none";
 	propagator_file = "none";
@@ -52,7 +54,7 @@ void parse_cmd(const int largc, char **largv, double& D0,
 		exit(0);
 	}
 	while (1) {
-		c=getopt(largc,largv,"ho:D:d:f:n:p:s:S:PT:e:r:R:A:g:");
+		c=getopt(largc,largv,"ho:D:d:f:n:p:q:s:S:PT:e:r:R:A:g:");
 		if (c == -1)	// no more options
 			break;
 		switch (c) {
@@ -80,6 +82,9 @@ void parse_cmd(const int largc, char **largv, double& D0,
 				break;
 			case 'S':
 				stiffness = atof(optarg);
+				break;
+			case 'q':
+				relative_stiffness = atof(optarg);
 				break;
 			case 's':
 				seed = atoi(optarg);
@@ -113,6 +118,10 @@ void parse_cmd(const int largc, char **largv, double& D0,
 	for (int i=0; i<nmat; i++) {
 		mat_files[i] = largv[optind+i];
 	}
+	if (stiffness>0 && relative_stiffness >0) {
+		fprintf(stderr,"Cannot set both a stiffness (-S) and a relative stiffness (-q) - you need to choose!\n");
+		exit(1);
+	}
 #ifdef VERBOSE
 	fprintf(stdout,"==================================================\n");
 	fprintf(stdout,"Input read:\n");
@@ -139,6 +148,14 @@ void parse_cmd(const int largc, char **largv, double& D0,
 	}
 	fprintf(stdout,"==================================================\n");
 #endif // VERBOSE
+	return;
+}
+
+void clean_matrices(vector<tmat *> &TMAT)
+{
+	int nmat = TMAT.size();
+	for (int i=0; i<nmat; i++)
+		delete [] TMAT[i];
 	return;
 }
 
@@ -202,6 +219,10 @@ void initialize_data_restart(const double &D0, vector<double> &DQ,
 	rtn = fread(&D_nbin_read,sizeof(int),1,rst);
 	if (nbin_read != nbin || D_nbin_read != D_nbin) {
 		fprintf(stderr,"X dimensions of restart data do not agree with transition matrices\n");
+		fprintf(stderr,"X dimensions of restart data (F) = %i\n",nbin_read);
+		fprintf(stderr,"        X dimensions of tmat (F) = %i\n",nbin);
+		fprintf(stderr,"X dimensions of restart data (D) = %i\n",D_nbin_read);
+		fprintf(stderr,"        X dimensions of tmat (D) = %i\n",D_nbin);
 		fprintf(stderr,"QUITTING!\n");
 		exit(1);
 	}
@@ -311,12 +332,46 @@ void update_1D(vector<vector<double> > &PQ, const vector<double> &FQ, vector<dou
 	return;
 }
 
+double stiffness_prior(vector<double>& DQ, bool pbc, double stiffness)
+{
+	double tmp,log_stiff;
+	int D_nbin;
+	D_nbin = DQ.size();
+	for (int i=0; i<D_nbin-1; i++) {
+		tmp = DQ[i]-DQ[i+1];
+		log_stiff += tmp*tmp/(2.*stiffness*stiffness);
+	}
+	if (pbc) {
+		tmp = DQ[D_nbin-1]-DQ[0];
+		log_stiff += tmp*tmp/(2.*stiffness*stiffness);
+	}
+	return -log_stiff;
+}
+
+double relative_stiffness_prior(vector<double>& DQ, bool pbc, double relative_stiffness)
+{
+	double tmp,tmp2,log_stiff;
+	int D_nbin;
+	D_nbin = DQ.size();
+	for (int i=0; i<D_nbin-1; i++) {
+		tmp = DQ[i]-DQ[i+1];
+		tmp2 = relative_stiffness*(DQ[i]+DQ[i+1])/2.;
+		log_stiff += tmp*tmp/(2.*tmp2*tmp2);
+	}
+	if (pbc) {
+		tmp = DQ[D_nbin-1]-DQ[0];
+		tmp2 = relative_stiffness*(DQ[D_nbin-1]+DQ[0])/2.;
+		log_stiff += tmp*tmp/(2.*tmp2*tmp2);
+	}
+	return -log_stiff;
+}
+
 double log_likelihood(vector<gsl_matrix *> K, vector<tmat *> TMAT, vector<vector<double> > &PQ,
 		gsl_matrix *expKt, int n,
 		gsl_matrix *Phalf, gsl_matrix *Pminushalf, gsl_matrix *Ksymm,
 		gsl_matrix *tmp_a, gsl_matrix *tmp_b, gsl_matrix *evecs,
-		gsl_vector *evals, gsl_eigen_symmv_workspace *w,
-		vector<double> &DQ, double stiffness, bool pbc)
+		gsl_vector *evals, gsl_eigen_symmv_workspace *w)
+//		vector<double> &DQ, double stiffness, bool pbc)
 {
 	int D_nbin;
 	int nmat = TMAT.size();
@@ -328,34 +383,38 @@ double log_likelihood(vector<gsl_matrix *> K, vector<tmat *> TMAT, vector<vector
 		Phalf, Pminushalf, Ksymm, tmp_a, tmp_b, evecs, evals, w);
 		for (int i=0; i<n; i++) {
 			for (int j=0; j<n; j++) {
-				//fprintf(stdout,"%5i %5i %12.6e %15i %12.6e\n",
-				//		i,j,gsl_matrix_get(expKt,i,j),TMAT[u]->mat[i][j],
-				//		log_like);
-				log_like += TMAT[u]->mat[i][j]*log(gsl_matrix_get(expKt,i,j));
+
+				// abs() included here in case expKt goes < 0 for numerical reasons...
+				double tmp = double(TMAT[u]->mat[i][j])*log(abs(gsl_matrix_get(expKt,i,j)));
+				log_like += tmp;
+				//fprintf(stdout,"%5i %5i %12i %12.6e %12.6e %12.6e\n",i,j,TMAT[u]->mat[i][j],gsl_matrix_get(expKt,i,j),tmp,log_like);
 			}
 		}
-		//fprintf(stdout,"u,loglike = %i %12.6e\n",u,log_like);
 	}
-	if (stiffness>0.0) {
-		D_nbin = DQ.size();
-		for (int i=0; i<D_nbin-1; i++) {
-			tmp = DQ[i]-DQ[i+1];
-			log_stiff += tmp*tmp/(stiffness*stiffness);
-		}
-		if (pbc) {
-			tmp = DQ[D_nbin-1]-DQ[0];
-			log_stiff += tmp*tmp/(stiffness*stiffness);
-		}
-	}
-	log_like -= log_stiff;
+//	if (stiffness>0.0) {
+//		D_nbin = DQ.size();
+//		for (int i=0; i<D_nbin-1; i++) {
+//			tmp = DQ[i]-DQ[i+1];
+//			log_stiff += tmp*tmp/(stiffness*stiffness);
+//		}
+//		if (pbc) {
+//			tmp = DQ[D_nbin-1]-DQ[0];
+//			log_stiff += tmp*tmp/(stiffness*stiffness);
+//		}
+//	}
+//	log_like -= log_stiff;
 	return log_like;
 }
 
 
 const char *usage = "\n\n"
 "        Usage\n"
-"             diffit -o log.dat -D D0 -d dD -f dF -n nsteps -p nprint [-s stiffness]\n"
-"                          [-r restart_file] mat1 mat2 ... matN\n"
+"             diffit -o log.dat -D D0 -d dD -f dF -n nsteps -p nprint \n"
+"                          [-S stiffness | -q relative_stiffness ] \n"
+"                          [-r restart_read_file] [-R restart_save_file] \n"
+"                          [-s random_seed] [-g propagator_output ] \n"
+"			   [-A initial_temperature] [-T final_temperature] \n"
+"                          mat1 mat2 ... matN\n"
 "        format of mat files:\n"
 "        line 1: nbin Qlo Qhi lag\n"
 "              nbin: number of bins along coordinate Q\n"
@@ -378,8 +437,9 @@ int main(int argc, char **argv)
 	vector<tmat *> TMAT;	// to read the data from mat_files into
 	vector<double> FQ, FQ_trial, DQ, DQ_trial, Peq;	// global F(Q), D(Q)
 	vector<vector <double> > PQ, PQ_trial, WQ; 			// PQ for each umbrella
-	double D0,dD,dF,dQ,stiffness,Qlo,Qhi,kQ,Q0,L;
-	double log_like, log_like_trial, sum_P, T1, T, T0, crit,rate;
+	double D0,dD,dF,dQ,stiffness,relative_stiffness,Qlo,Qhi,kQ,Q0,L;
+	double log_like, log_like_trial, prior, prior_trial, sum_P, T1, T, T0, crit,rate, global_scale;
+	double E, E_trial;
 	int nsteps, nprint,nbin,nbin_D, nmat;
 	vector <gsl_matrix *> K, K_trial;
 	gsl_matrix *tmp, *Phalf, *Pminushalf, *Ksymm, *tmp_a, *tmp_b, *evecs,*expKt, *Keq;
@@ -391,7 +451,7 @@ int main(int argc, char **argv)
 	const double pmin = 1.e-20;
 	gsl_rng *twister;
 
-	parse_cmd(argc, argv, D0, dD, dF, stiffness, nsteps, nprint, 
+	parse_cmd(argc, argv, D0, dD, dF, stiffness, relative_stiffness, nsteps, nprint, 
 			outp_name, mat_files, restart_file, restart_save_file,
 			propagator_file,
 			pbc, seed, T1, T0, usage);
@@ -478,9 +538,15 @@ int main(int argc, char **argv)
 	}
 	
 	// calculate initial log likelihood
+	prior = prior_trial = 0;
 	log_like = log_likelihood(K, TMAT, PQ, expKt, nbin,
-		Phalf, Pminushalf, Ksymm, tmp_a, tmp_b, evecs, evals, w, DQ, 
-		stiffness,pbc);
+		Phalf, Pminushalf, Ksymm, tmp_a, tmp_b, evecs, evals, w);
+	if (stiffness>0) {
+		prior = stiffness_prior(DQ, pbc, stiffness);
+	} else if (relative_stiffness>0) {
+		prior = relative_stiffness_prior(DQ, pbc, relative_stiffness);
+	}
+	E = - (log_like + prior);
 	fprintf(stdout,"Initial log-likelihood = %12.6e\n",log_like);
 	 
 	twister = gsl_rng_alloc(gsl_rng_mt19937);
@@ -490,10 +556,14 @@ int main(int argc, char **argv)
 	double new_f, old_f, new_d, old_d;
 	// loop over nsteps
 	double tgrad = (T1-T0)/double(nsteps);
+
+	int F_try, F_success, D_try, D_success, D_glob_try, D_glob_success;
+	F_try = F_success = D_try = D_success = D_glob_try = D_glob_success = 0;
 	for (int step=0; step<nsteps; step++) {
-	// (i) attempt moves in either F or D
-		// first F:
+	// (i) attempt moves in either F or D or global D (sequentially)
 		T = T0 + float(step)*tgrad;
+		// first F:
+		F_try++;
 		picked_bin = gsl_rng_uniform_int(twister,nbin);
 		old_f = FQ[picked_bin];
 		new_f = old_f + gsl_ran_gaussian(twister,dF);
@@ -502,18 +572,27 @@ int main(int argc, char **argv)
 		update_1D(PQ,FQ,DQ,WQ,K,nbin,pbc,dQ);
 		log_like_trial = log_likelihood(K, TMAT, PQ, expKt, nbin,
 				Phalf, Pminushalf, Ksymm, tmp_a, tmp_b, evecs,
-				evals, w, DQ, stiffness,pbc);
-		//fprintf(stdout,"-log_like = %12.6e; -log_like_trial = %12.6e \n",
-		//			-log_like, -log_like_trial);
-		if (log_like_trial>log_like) {
+				evals, w);
+		if (stiffness>0) {
+			prior_trial = stiffness_prior(DQ, pbc, stiffness);
+		} else if (relative_stiffness>0) {
+			prior_trial = relative_stiffness_prior(DQ, pbc, relative_stiffness);
+		}
+		E_trial = -( log_like_trial + prior_trial);
+		if (E_trial<E) {
 			//accept
+			E = E_trial; 
 			log_like = log_like_trial;
+			prior = prior_trial;
+			F_success++;
 		} else {
-			crit = exp( (log_like_trial-log_like)/T );
-			//fprintf(stdout,"crit = %12.6f\n",crit);
+			// use MC crit.
+			crit = exp( -(E_trial-E)/T );
 			if (gsl_ran_flat(twister,0,1)<crit) {
+				E = E_trial; 
 				log_like = log_like_trial;
-			//	fprintf(stdout,"ACCEPT!\n");
+				prior = prior_trial;
+				F_success++;
 			} else {
 				// go back...
 				FQ[picked_bin] = old_f;
@@ -522,6 +601,7 @@ int main(int argc, char **argv)
 		}
 
 		// then D:
+		D_try++;
 		picked_bin = gsl_rng_uniform_int(twister,nbin_D);
 		old_d = DQ[picked_bin];
 		//new_d = abs(old_d*(1.+gsl_ran_gaussian(twister,dD)));
@@ -530,19 +610,72 @@ int main(int argc, char **argv)
 		update_1D(PQ,FQ,DQ,WQ,K,nbin,pbc,dQ);
 		log_like_trial = log_likelihood(K, TMAT, PQ, expKt, nbin,
 				Phalf, Pminushalf, Ksymm, tmp_a, tmp_b, evecs,
-				evals, w, DQ, stiffness,pbc);
-		if (log_like_trial>log_like) {
+				evals, w);
+		if (stiffness>0) {
+			prior_trial = stiffness_prior(DQ, pbc, stiffness);
+		} else if (relative_stiffness>0) {
+			prior_trial = relative_stiffness_prior(DQ, pbc, relative_stiffness);
+		}
+		E_trial = -(log_like_trial + prior_trial);
+		if (E_trial<E) {
 			//accept
+			E = E_trial;
 			log_like = log_like_trial;
+			prior = prior_trial;
+			D_success++;
 		} else {
-			crit = exp( (log_like_trial-log_like)/T );
+			crit = exp( -(E_trial-E)/T );
 			if (gsl_ran_flat(twister,0,1)<crit) {
+				E = E_trial;
 				log_like = log_like_trial;
+				prior = prior_trial;
+				D_success++;
 			} else {
 				// go back...
 				DQ[picked_bin] = old_d;
 			}
 		}
+
+#ifdef GLOBALMOVES
+		// then D (global scaling of all D)
+		D_glob_try++;
+		double global_fudge = 0.1;
+		global_scale = exp(gsl_ran_flat(twister,-dD*global_fudge,dD*global_fudge));
+		for (int q=0; q<nbin_D;q++) {
+			DQ[q] *= global_scale; 
+		}
+		update_1D(PQ,FQ,DQ,WQ,K,nbin,pbc,dQ);
+		log_like_trial = log_likelihood(K, TMAT, PQ, expKt, nbin,
+				Phalf, Pminushalf, Ksymm, tmp_a, tmp_b, evecs,
+				evals, w);
+		if (stiffness>0) {
+			prior_trial = stiffness_prior(DQ, pbc, stiffness);
+		} else if (relative_stiffness>0) {
+			prior_trial = relative_stiffness_prior(DQ, pbc, relative_stiffness);
+		}
+		E_trial = -(log_like_trial + prior_trial);
+		if (E_trial<E) {
+			//accept
+			E = E_trial;
+			log_like = log_like_trial;
+			prior = prior_trial;
+			D_glob_success++;
+		} else {
+			crit = exp( -(E_trial-E)/T );
+			if (gsl_ran_flat(twister,0,1)<crit) {
+				E = E_trial;
+				log_like = log_like_trial;
+				prior = prior_trial;
+				D_glob_success++;
+			} else {
+				// go back...
+				for (int q=0; q<nbin_D;q++) {
+					DQ[q] /= global_scale;
+				}
+			}
+		}
+#endif //GLOBALMOVES
+
 		if (step%nprint==0) {
 			sum_P = 0.0;
 			for (int i=0; i<nbin; i++) {
@@ -557,9 +690,9 @@ int main(int argc, char **argv)
 			calc_propagators(Keq, expKt, Peq, nbin, TMAT[0]->lag,
 					Phalf, Pminushalf, Ksymm, tmp_a, tmp_b, evecs, evals, w);
 			rate = gsl_vector_get(evals,1);
-			fprintf(stdout,"step %i : T=%5.3f; -loglike = %12.6e; k_slowest = %12.6e\n",
-					step,T,-log_like,rate);
-			fprintf(outp,"%8i %12.6e %12.6e ",step,-log_like,rate);
+			fprintf(stdout,"step %i : T=%5.3f; -loglike = %12.6e; prior = %12.6e; k_slowest = %12.6e\n",
+					step,T,-log_like,prior,rate);
+			fprintf(outp,"%8i %12.6e %12.6e ",step,-log_like,rate); // not changing this yet as would break python scripts
 			for (int i=0; i<nbin; i++) {
 				fprintf(outp,"%12.6e ",FQ[i]);
 			}
@@ -570,6 +703,11 @@ int main(int argc, char **argv)
 		}
 	}
 	fclose(outp);
+	fprintf(stdout,"================================================================================\n" );
+	fprintf(stdout,"       Fraction D moves accepted = %12.6f\n", double(D_success)/double(D_try));
+	fprintf(stdout,"       Fraction F moves accepted = %12.6f\n", double(F_success)/double(F_try));
+	fprintf(stdout,"Fraction global D moves accepted = %12.6f\n", double(D_glob_success)/double(D_glob_try));
+	fprintf(stdout,"================================================================================\n" );
 
 	if (propagator_file != NONE) {
 		outp = fopen(propagator_file.c_str(),"w");
@@ -630,4 +768,5 @@ int main(int argc, char **argv)
 	gsl_matrix_free(evecs);
 	gsl_vector_free(evals);
 	gsl_eigen_symmv_free(w);
+	//clean_matrices(TMAT);
 }
