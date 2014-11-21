@@ -34,6 +34,46 @@ const string Usage = "\n\
 			-C [optional] : center data in bins\n\
 			";
 
+void minmax(const string &ifile, int col, double &lo, double &hi)
+{
+	double dQ, Qi, Qj, Qic, Qjc;
+	ifstream inp;
+	const int buf_len = 1024;
+	char buf[buf_len];
+	string tmps;
+	//double tmpf;
+	//int dim, Qptr, bin_i, bin_j;
+
+
+	//while (!inp.eof()) {
+	//	inp.getline(buf,buf_len,'\n');
+	//	dim++;
+	//}
+	//dim--;
+	//inp.close();
+	//inp.clear();
+	inp.open(ifile.c_str());
+	if (!inp.good()) {
+		fprintf(stderr,"Could not open file %s to read data\n",ifile.c_str());
+		exit(1);
+	}
+	while (!inp.eof()) {
+		for (int t=1; t<col; t++)
+			inp >> tmps;
+		inp >> Qi;
+		if (lo>hi) {
+			lo = hi = Qi;
+		} else if (Qi< lo) {
+			lo = Qi;
+		} else if (Qi> hi) {
+			hi = Qi;
+		}
+		inp.getline(buf,buf_len,'\n');
+	}
+	inp.close();
+	return;
+}
+
 void bin_transitions(const string &ifile, vector<vector<int> > &hist, int col, double lo,
 		double hi, int nbin, int dt, bool centre_data)
 {
@@ -166,7 +206,8 @@ int main(int argc, char *argv[])
 	string ofile;
 	dt = 1;
 	nbin = 50;
-	lo = 0.0; hi = 1.0;
+	//lo = 0.0; hi = 1.0;
+	lo = 1.0; hi = 0.0;
 	col = 1;
 	ofile = "junk.dat";
 	centre_data = false;
@@ -225,6 +266,13 @@ int main(int argc, char *argv[])
 	files.resize(nfile);
 	for (int i=0; i<argc-optind; i++) 
 		files[i] = argv[optind+i];
+
+	// find min, max q
+	if (lo >= hi) {
+		for (int i=0; i<nfile; i++) 
+			minmax(files[i], col, lo, hi);
+	}
+
 	fprintf(stdout,"==========================================================\n");
 	fprintf(stdout,"Reading data from column %i of the following files:\n",col);
 	for (int i=0; i<nfile; i++) 
