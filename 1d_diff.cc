@@ -14,7 +14,8 @@
 using namespace std;
 
 const char *Usage = "\n\nUsage: "
-" to be written...\n\n";
+" 	1d_diff -f F(x)_file -d D(x)_file -t timestep -n nstep"
+"		-p nprint -x start_x -o outp_file \n\n";
 
 void parse_1d(const char *f, ap::real_1d_array &x,
 	ap::real_1d_array &y, int &n)
@@ -58,7 +59,7 @@ void parse_1d(const char *f, ap::real_1d_array &x,
 int main(int argc, char **argv)
 {
 	ap::real_1d_array xf, f, xd, d, f_coeffs, d_coeffs; 
-	string f_file, d_file;
+	string f_file, d_file, o_file;
 	int c, nf, nd;
 	double dt =1.;
 	int nsteps = 1000;
@@ -73,7 +74,7 @@ int main(int argc, char **argv)
 	}
 	
 	while (1) {
-		c = getopt(argc,argv,"f:d:t:n:x:p:");
+		c = getopt(argc,argv,"o:f:d:t:n:x:p:");
 		if (c == -1) 
 			break;
 		switch(c) {
@@ -82,6 +83,9 @@ int main(int argc, char **argv)
 				break;
 			case 'd':
 				d_file = string(optarg);
+				break;
+			case 'o':
+				o_file = string(optarg);
 				break;
 			case 't':
 				dt = atof(optarg);
@@ -127,6 +131,11 @@ int main(int argc, char **argv)
 	//	fprintf(stdout,"%8.3f %12.6e %12.6e %12.6e\n",xk,D,F,dF);
 	//}
 	
+	FILE *outp = fopen(o_file.c_str(),"w");
+	if (outp == NULL) {
+		fprintf(stderr,"Could not open %s for output\n",o_file.c_str());
+		exit(1);
+	}
 	// create rng:
 	twister = gsl_rng_alloc(gsl_rng_mt19937);
 	gsl_rng_set(twister, seed);
@@ -134,7 +143,7 @@ int main(int argc, char **argv)
 	x = x0;
 	for (int step=0; step<nsteps; step++) {
 		if (step%nprint ==0) {
-			fprintf(stdout,"%8.3f %8.3f\n",double(step)*dt,x);
+			fprintf(outp,"%8.3f %8.3f\n",double(step)*dt,x);
 		}
 		splinedifferentiation(f_coeffs,x,F,dF,d2F);
 		splinedifferentiation(d_coeffs,x,D,dD,d2D);
