@@ -1,5 +1,5 @@
 
-TARGETS=brumbrella thist diffit propagators
+TARGETS=brumbrella thist diffit propagators 1d_diff
 # gogo
 #CFLAGS= 
 #LDFLAGS=-lgsl -lgslcblas
@@ -24,6 +24,9 @@ propagators: propagators.cc diff_model.o
 
 thist: thist.cc
 	$(CXX) $(OPT) -o thist thist.cc
+
+1d_diff: 1d_diff.cc ap.o spline3.o
+	$(CXX) $(OPT) -o 1d_diff 1d_diff.cc ap.o spline3.o $(CFLAGS) $(LDFLAGS)
 
 install: 
 	cp $(TARGETS) $(HOME)/bin
