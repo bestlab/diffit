@@ -5,10 +5,11 @@
 #define VERBOSE
 #define GLOBALMOVES
 
-#include <cstdio> 
-#include <cstdlib> 
 #include <vector>
 #include <string>
+#include <algorithm>
+#include <cstdio> 
+#include <cstdlib> 
 #include <cmath>
 #include <unistd.h>
 #include <gsl/gsl_rng.h>
@@ -24,7 +25,8 @@
 using namespace std;
 
 void parse_cmd(const int largc, char **largv, double& D0,
-		double &dD, double &dF, double &stiffness, double &relative_stiffness, int &nsteps, int &nprint, 
+		double &dD, double &dF, double &stiffness, double &relative_stiffness, 
+		double &min_relative_stiffness, int &nsteps, int &nprint, 
 		string &outp_name, vector<string> &mat_files, string &restart_file,
 		string &restart_save_file, string &propagator_file,
 		bool &pbc, int &seed, double &T1, double &T0, const char *usage)
@@ -38,6 +40,7 @@ void parse_cmd(const int largc, char **largv, double& D0,
 	nprint = 100;			// frq for writing output
 	stiffness = -1.0;		// i.e. no stiffness
 	relative_stiffness = -1.0;		// i.e. no relative stiffness
+	min_relative_stiffness = -1.0;		// i.e. no min relative stiffness
 	outp_name = "default.dat";
 	restart_file = "none";
 	propagator_file = "none";
@@ -54,7 +57,7 @@ void parse_cmd(const int largc, char **largv, double& D0,
 		exit(0);
 	}
 	while (1) {
-		c=getopt(largc,largv,"ho:D:d:f:n:p:q:s:S:PT:e:r:R:A:g:");
+		c=getopt(largc,largv,"ho:D:d:f:n:p:q:Q:s:S:PT:e:r:R:A:g:");
 		if (c == -1)	// no more options
 			break;
 		switch (c) {
@@ -85,6 +88,9 @@ void parse_cmd(const int largc, char **largv, double& D0,
 				break;
 			case 'q':
 				relative_stiffness = atof(optarg);
+				break;
+			case 'Q':
+				min_relative_stiffness = atof(optarg);
 				break;
 			case 's':
 				seed = atoi(optarg);
@@ -120,6 +126,14 @@ void parse_cmd(const int largc, char **largv, double& D0,
 	}
 	if (stiffness>0 && relative_stiffness >0) {
 		fprintf(stderr,"Cannot set both a stiffness (-S) and a relative stiffness (-q) - you need to choose!\n");
+		exit(1);
+	}
+	if (stiffness>0 && min_relative_stiffness >0) {
+		fprintf(stderr,"Cannot set both a stiffness (-S) and a relative stiffness (-Q) - you need to choose!\n");
+		exit(1);
+	}
+	if (relative_stiffness>0 && min_relative_stiffness >0) {
+		fprintf(stderr,"Cannot set both a rel. stiffness (-q) and a min relative stiffness (-Q) - you need to choose!\n");
 		exit(1);
 	}
 #ifdef VERBOSE
@@ -366,6 +380,24 @@ double relative_stiffness_prior(vector<double>& DQ, bool pbc, double relative_st
 	return -log_stiff;
 }
 
+double min_relative_stiffness_prior(vector<double>& DQ, bool pbc, double min_relative_stiffness)
+{
+	double tmp,tmp2,log_stiff;
+	int D_nbin;
+	D_nbin = DQ.size();
+	for (int i=0; i<D_nbin-1; i++) {
+		tmp = DQ[i]-DQ[i+1];
+		tmp2 = min_relative_stiffness*min(DQ[i],DQ[i+1]);
+		log_stiff += tmp*tmp/(2.*tmp2*tmp2);
+	}
+	if (pbc) {
+		tmp = DQ[D_nbin-1]-DQ[0];
+		tmp2 = min_relative_stiffness*min(DQ[D_nbin-1],DQ[0]);
+		log_stiff += tmp*tmp/(2.*tmp2*tmp2);
+	}
+	return -log_stiff;
+}
+
 double log_likelihood(vector<gsl_matrix *> K, vector<tmat *> TMAT, vector<vector<double> > &PQ,
 		gsl_matrix *expKt, int n,
 		gsl_matrix *Phalf, gsl_matrix *Pminushalf, gsl_matrix *Ksymm,
@@ -410,11 +442,11 @@ double log_likelihood(vector<gsl_matrix *> K, vector<tmat *> TMAT, vector<vector
 const char *usage = "\n\n"
 "        Usage\n"
 "             diffit -o log.dat -D D0 -d dD -f dF -n nsteps -p nprint \n"
-"                          [-S stiffness | -q relative_stiffness ] \n"
-"                          [-r restart_read_file] [-R restart_save_file] \n"
-"                          [-s random_seed] [-g propagator_output ] \n"
-"			   [-A initial_temperature] [-T final_temperature] \n"
-"                          mat1 mat2 ... matN\n"
+"                   [-S stiffness | -q relative_stiffness | -Q min_relative_stiffness ] \n"
+"                   [-r restart_read_file] [-R restart_save_file] \n"
+"                   [-s random_seed] [-g propagator_output ] \n"
+"		    [-A initial_temperature] [-T final_temperature] \n"
+"                   mat1 mat2 ... matN\n"
 "        format of mat files:\n"
 "        line 1: nbin Qlo Qhi lag\n"
 "              nbin: number of bins along coordinate Q\n"
@@ -437,7 +469,8 @@ int main(int argc, char **argv)
 	vector<tmat *> TMAT;	// to read the data from mat_files into
 	vector<double> FQ, FQ_trial, DQ, DQ_trial, Peq;	// global F(Q), D(Q)
 	vector<vector <double> > PQ, PQ_trial, WQ; 			// PQ for each umbrella
-	double D0,dD,dF,dQ,stiffness,relative_stiffness,Qlo,Qhi,kQ,Q0,L;
+	double D0,dD,dF,dQ,stiffness,relative_stiffness,min_relative_stiffness;
+	double Qlo,Qhi,kQ,Q0,L;
 	double log_like, log_like_trial, prior, prior_trial, sum_P, T1, T, T0, crit,rate, global_scale;
 	double E, E_trial;
 	int nsteps, nprint,nbin,nbin_D, nmat;
@@ -451,7 +484,8 @@ int main(int argc, char **argv)
 	const double pmin = 1.e-20;
 	gsl_rng *twister;
 
-	parse_cmd(argc, argv, D0, dD, dF, stiffness, relative_stiffness, nsteps, nprint, 
+	parse_cmd(argc, argv, D0, dD, dF, stiffness, relative_stiffness, min_relative_stiffness,
+			nsteps, nprint, 
 			outp_name, mat_files, restart_file, restart_save_file,
 			propagator_file,
 			pbc, seed, T1, T0, usage);
@@ -545,6 +579,8 @@ int main(int argc, char **argv)
 		prior = stiffness_prior(DQ, pbc, stiffness);
 	} else if (relative_stiffness>0) {
 		prior = relative_stiffness_prior(DQ, pbc, relative_stiffness);
+	} else if (min_relative_stiffness>0) {
+		prior = min_relative_stiffness_prior(DQ, pbc, min_relative_stiffness);
 	}
 	E = - (log_like + prior);
 	fprintf(stdout,"Initial log-likelihood = %12.6e\n",log_like);
@@ -577,6 +613,8 @@ int main(int argc, char **argv)
 			prior_trial = stiffness_prior(DQ, pbc, stiffness);
 		} else if (relative_stiffness>0) {
 			prior_trial = relative_stiffness_prior(DQ, pbc, relative_stiffness);
+		} else if (min_relative_stiffness>0) {
+			prior_trial = min_relative_stiffness_prior(DQ, pbc, min_relative_stiffness);
 		}
 		E_trial = -( log_like_trial + prior_trial);
 		if (E_trial<E) {
@@ -615,6 +653,8 @@ int main(int argc, char **argv)
 			prior_trial = stiffness_prior(DQ, pbc, stiffness);
 		} else if (relative_stiffness>0) {
 			prior_trial = relative_stiffness_prior(DQ, pbc, relative_stiffness);
+		} else if (min_relative_stiffness>0) {
+			prior_trial = min_relative_stiffness_prior(DQ, pbc, min_relative_stiffness);
 		}
 		E_trial = -(log_like_trial + prior_trial);
 		if (E_trial<E) {
@@ -652,6 +692,8 @@ int main(int argc, char **argv)
 			prior_trial = stiffness_prior(DQ, pbc, stiffness);
 		} else if (relative_stiffness>0) {
 			prior_trial = relative_stiffness_prior(DQ, pbc, relative_stiffness);
+		} else if (min_relative_stiffness>0) {
+			prior_trial = min_relative_stiffness_prior(DQ, pbc, min_relative_stiffness);
 		}
 		E_trial = -(log_like_trial + prior_trial);
 		if (E_trial<E) {
