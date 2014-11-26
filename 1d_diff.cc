@@ -4,6 +4,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <getopt.h>
 #include <gsl/gsl_rng.h>
@@ -110,26 +111,33 @@ int main(int argc, char **argv)
 
 	parse_1d(f_file.c_str(), xf, f, nf);
 	parse_1d(d_file.c_str(), xd, d, nd);
-	xlo = max(xf(0),xd(0));
-	xhi = min(xf(nf-1),xd(nd-1));
+	//xlo = max(xf(0),xd(0));
+	//xhi = min(xf(nf-1),xd(nd-1));
+	//xhi = min(xf(nf-1),xd(nd-1));
+	//xlo = xf(0)-0.5*(xf(1)-xf(0));
+	//xhi = xf(nf-1)+0.5*(xf(nf-1)-xf(nf-2));
+	xlo = xf(0);
+	xhi = xf(nf-1);
 
-	//fprintf(stdout,"%8.3f %8.3f %8.3f\n",xf(0),xd(0),xlo);
-	//fprintf(stdout,"%8.3f %8.3f %8.3f\n",xf(nf-1),xd(nd-1),xhi);
+	fprintf(stderr,"%8.3f %8.3f %8.3f\n",xf(0),xd(0),xlo);
+	fprintf(stderr,"%8.3f %8.3f %8.3f\n",xf(nf-1),xd(nd-1),xhi);
 
 	buildcubicspline(xf,f,nf,0,0.,0,0.,f_coeffs);
 	//buildcubicspline(xd,d,nd,0,0.,0,0.,d_coeffs);
 	buildcubicspline(xd,d,nd,2,0.,2,0.,d_coeffs);
-	buildcubicspline(xf,f,nf,2,0.,2,0.,f_coeffs);
+	//buildcubicspline(xf,f,nf,2,0.,2,0.,f_coeffs);
 
 	int nx = 1000;
 	double dx = (xhi-xlo)/double(nx);
 	double F, dF, d2F, D, dD, d2D;
-	//for (int k=0; k<nx; k++) {
-	//	double xk = xlo+double(k)*dx;
-	//	splinedifferentiation(f_coeffs,xk,F,dF,d2F);
-	//	splinedifferentiation(d_coeffs,xk,D,dD,d2D);
-	//	fprintf(stdout,"%8.3f %12.6e %12.6e %12.6e\n",xk,D,F,dF);
-	//}
+	fprintf(stdout,"# xlo = %8.3f\n",xlo);
+	fprintf(stdout,"# xhi = %8.3f\n",xhi);
+	for (int k=0; k<nx; k++) {
+		double xk = xlo+double(k)*dx;
+		splinedifferentiation(f_coeffs,xk,F,dF,d2F);
+		splinedifferentiation(d_coeffs,xk,D,dD,d2D);
+		fprintf(stdout,"%8.3f %12.6e %12.6e %12.6e\n",xk,D,F,dF);
+	}
 	
 	FILE *outp = fopen(o_file.c_str(),"w");
 	if (outp == NULL) {
@@ -141,13 +149,24 @@ int main(int argc, char **argv)
 	gsl_rng_set(twister, seed);
 	//
 	x = x0;
+	D=0.1;
 	for (int step=0; step<nsteps; step++) {
+		double xold = x;
 		if (step%nprint ==0) {
 			fprintf(outp,"%8.3f %8.3f\n",double(step)*dt,x);
 		}
 		splinedifferentiation(f_coeffs,x,F,dF,d2F);
 		splinedifferentiation(d_coeffs,x,D,dD,d2D);
 		dR = sqrt(2.*D*dt);
-		x += -dF*D*dt + gsl_ran_gaussian(twister,dR);
+		x += (-dF*D+dD)*dt + gsl_ran_gaussian(twister,dR);
+		// reflecting boundaries:
+		if ( x < xlo ) {
+			x = xold;
+			//x = 2.*xlo-x;
+		} 
+		if ( x > xhi ) {
+			x = xold; 
+			//x = 2.*xhi-x;
+		}
 	}
 }
