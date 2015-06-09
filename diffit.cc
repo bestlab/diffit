@@ -4,6 +4,8 @@
 
 #define VERBOSE
 #define GLOBALMOVES
+// this does not seem helfpul: 
+//#define OFFSET
 
 #include <vector>
 #include <string>
@@ -29,7 +31,8 @@ void parse_cmd(const int largc, char **largv, double& D0,
 		double &min_relative_stiffness, int &nsteps, int &nprint, 
 		string &outp_name, vector<string> &mat_files, string &restart_file,
 		string &restart_save_file, string &propagator_file,
-		bool &pbc, int &seed, double &T1, double &T0, const char *usage)
+		bool &pbc, bool &t0_offset,
+		int &seed, double &T1, double &T0, const char *usage)
 {
 	// defaults
 	string NONE = "none";
@@ -49,6 +52,7 @@ void parse_cmd(const int largc, char **largv, double& D0,
 	seed = 27041994;
 	T0 = 1.0;
 	T1 = 1.0;
+	t0_offset = false;
 	int nmat = 0;
 	int c;
 	//
@@ -57,7 +61,7 @@ void parse_cmd(const int largc, char **largv, double& D0,
 		exit(0);
 	}
 	while (1) {
-		c=getopt(largc,largv,"ho:D:d:f:n:p:q:Q:s:S:PT:e:r:R:A:g:");
+		c=getopt(largc,largv,"ho:D:d:f:n:p:q:Q:s:S:PT:e:r:R:A:g:O");
 		if (c == -1)	// no more options
 			break;
 		switch (c) {
@@ -113,6 +117,11 @@ void parse_cmd(const int largc, char **largv, double& D0,
 			case 'T':
 				T1 = atof(optarg);
 				break;
+#ifdef OFFSET
+			case 'O':
+				t0_offset = true;
+				break;
+#endif // OFFSET
 			default:
 				fprintf(stderr,"?? getopt returned character code 0%o ??\n", c);
 				fprintf(stderr,"%s\n",usage);
@@ -204,7 +213,7 @@ void initialize_data(const double &D0, vector<double> &DQ,
 
 void initialize_data_restart(const double &D0, vector<double> &DQ,
 		vector<double> &FQ, vector<double> &DQ_trial, vector<double> &FQ_trial, 
-		const int &nbin, bool pbc, const string &restart_file)
+		const int &nbin, double &t0, bool pbc, bool t0_offset, const string &restart_file)
 {
 	int D_nbin;
 	FILE *rst;
@@ -249,6 +258,11 @@ void initialize_data_restart(const double &D0, vector<double> &DQ,
 		//rtn = fgets(buf,buflen,rst);
 		//DQ[i] = atof(strtok(buf," "));
 		rtn = fread(&DQ[i],sizeof(double),1,rst);
+	}
+	if (t0_offset) {
+		rtn = fread(&t0, sizeof(double),1,rst);
+	} else {
+		t0 = 0.;
 	}
 	return;
 }
@@ -402,7 +416,7 @@ double log_likelihood(vector<gsl_matrix *> K, vector<tmat *> TMAT, vector<vector
 		gsl_matrix *expKt, int n,
 		gsl_matrix *Phalf, gsl_matrix *Pminushalf, gsl_matrix *Ksymm,
 		gsl_matrix *tmp_a, gsl_matrix *tmp_b, gsl_matrix *evecs,
-		gsl_vector *evals, gsl_eigen_symmv_workspace *w)
+		gsl_vector *evals, gsl_eigen_symmv_workspace *w, double t0)
 //		vector<double> &DQ, double stiffness, bool pbc)
 {
 	int D_nbin;
@@ -411,7 +425,7 @@ double log_likelihood(vector<gsl_matrix *> K, vector<tmat *> TMAT, vector<vector
 	double tmp;
 	double log_stiff = 0.;
 	for (int u=0; u<nmat; u++) {
-		calc_propagators(K[u], expKt, PQ[u], n, TMAT[u]->lag,
+		calc_propagators(K[u], expKt, PQ[u], n, TMAT[u]->lag + t0,
 		Phalf, Pminushalf, Ksymm, tmp_a, tmp_b, evecs, evals, w);
 		for (int i=0; i<n; i++) {
 			for (int j=0; j<n; j++) {
@@ -473,12 +487,15 @@ int main(int argc, char **argv)
 	double Qlo,Qhi,kQ,Q0,L;
 	double log_like, log_like_trial, prior, prior_trial, sum_P, T1, T, T0, crit,rate, global_scale;
 	double E, E_trial;
+	double min_lag, dt0;
 	int nsteps, nprint,nbin,nbin_D, nmat;
 	vector <gsl_matrix *> K, K_trial;
 	gsl_matrix *tmp, *Phalf, *Pminushalf, *Ksymm, *tmp_a, *tmp_b, *evecs,*expKt, *Keq;
 	gsl_vector *evals;
 	gsl_eigen_symmv_workspace *w;
-	bool pbc;
+	bool pbc, t0_offset;
+	double t0 = 0.0;
+	double old_t0, new_t0; 
 	FILE *outp;
 	int seed;
 	const double pmin = 1.e-20;
@@ -488,7 +505,7 @@ int main(int argc, char **argv)
 			nsteps, nprint, 
 			outp_name, mat_files, restart_file, restart_save_file,
 			propagator_file,
-			pbc, seed, T1, T0, usage);
+			pbc, t0_offset, seed, T1, T0, usage);
 	read_matrices(mat_files,TMAT);
 
 	// TODO: include consistency check between input matrices (same nbin, dQ, etc.).
@@ -516,7 +533,7 @@ int main(int argc, char **argv)
 	if (restart_file == NONE) {
 		initialize_data(D0,DQ,FQ,DQ_trial,FQ_trial,nbin,pbc);
 	} else {
-		initialize_data_restart(D0,DQ,FQ,DQ_trial,FQ_trial,nbin,pbc,restart_file);
+		initialize_data_restart(D0,DQ,FQ,DQ_trial,FQ_trial,nbin,t0,pbc,t0_offset,restart_file);
 	}
 
 	// set up initial rate matrices - one for each umbrella
@@ -574,7 +591,7 @@ int main(int argc, char **argv)
 	// calculate initial log likelihood
 	prior = prior_trial = 0;
 	log_like = log_likelihood(K, TMAT, PQ, expKt, nbin,
-		Phalf, Pminushalf, Ksymm, tmp_a, tmp_b, evecs, evals, w);
+		Phalf, Pminushalf, Ksymm, tmp_a, tmp_b, evecs, evals, w, t0);
 	if (stiffness>0) {
 		prior = stiffness_prior(DQ, pbc, stiffness);
 	} else if (relative_stiffness>0) {
@@ -588,13 +605,26 @@ int main(int argc, char **argv)
 	twister = gsl_rng_alloc(gsl_rng_mt19937);
 	gsl_rng_set(twister, seed);
 
+	if (t0_offset) {
+		min_lag = -1.;
+		for (int k=0; k<TMAT.size(); k++) {
+			double llag = TMAT[k] -> lag;
+			if (min_lag <0) {
+				min_lag= llag;
+			} else if (llag < min_lag) {
+				min_lag = llag;
+			}
+		}
+		dt0 = 0.1*min_lag;
+	}
+
 	int picked_bin;
 	double new_f, old_f, new_d, old_d;
 	// loop over nsteps
 	double tgrad = (T1-T0)/double(nsteps);
 
-	int F_try, F_success, D_try, D_success, D_glob_try, D_glob_success;
-	F_try = F_success = D_try = D_success = D_glob_try = D_glob_success = 0;
+	int F_try, F_success, D_try, D_success, D_glob_try, D_glob_success, t0_try, t0_success;
+	F_try = F_success = D_try = D_success = D_glob_try = D_glob_success = t0_try = t0_success =  0;
 	for (int step=0; step<nsteps; step++) {
 	// (i) attempt moves in either F or D or global D (sequentially)
 		T = T0 + float(step)*tgrad;
@@ -608,7 +638,7 @@ int main(int argc, char **argv)
 		update_1D(PQ,FQ,DQ,WQ,K,nbin,pbc,dQ);
 		log_like_trial = log_likelihood(K, TMAT, PQ, expKt, nbin,
 				Phalf, Pminushalf, Ksymm, tmp_a, tmp_b, evecs,
-				evals, w);
+				evals, w, t0);
 		if (stiffness>0) {
 			prior_trial = stiffness_prior(DQ, pbc, stiffness);
 		} else if (relative_stiffness>0) {
@@ -648,7 +678,7 @@ int main(int argc, char **argv)
 		update_1D(PQ,FQ,DQ,WQ,K,nbin,pbc,dQ);
 		log_like_trial = log_likelihood(K, TMAT, PQ, expKt, nbin,
 				Phalf, Pminushalf, Ksymm, tmp_a, tmp_b, evecs,
-				evals, w);
+				evals, w, t0);
 		if (stiffness>0) {
 			prior_trial = stiffness_prior(DQ, pbc, stiffness);
 		} else if (relative_stiffness>0) {
@@ -687,7 +717,7 @@ int main(int argc, char **argv)
 		update_1D(PQ,FQ,DQ,WQ,K,nbin,pbc,dQ);
 		log_like_trial = log_likelihood(K, TMAT, PQ, expKt, nbin,
 				Phalf, Pminushalf, Ksymm, tmp_a, tmp_b, evecs,
-				evals, w);
+				evals, w, t0);
 		if (stiffness>0) {
 			prior_trial = stiffness_prior(DQ, pbc, stiffness);
 		} else if (relative_stiffness>0) {
@@ -718,6 +748,38 @@ int main(int argc, char **argv)
 		}
 #endif //GLOBALMOVES
 
+#ifdef OFFSET
+		if (t0_offset) {
+			t0_try++;
+			old_t0 = t0;
+			new_t0 = -2.0*min_lag;
+			while (new_t0 < -min_lag) {
+				new_t0 = old_t0 + gsl_ran_gaussian(twister,dt0);
+			}
+
+			log_like_trial = log_likelihood(K, TMAT, PQ, expKt, nbin,
+				Phalf, Pminushalf, Ksymm, tmp_a, tmp_b, evecs,
+				evals, w, new_t0);
+			E_trial = -(log_like_trial + prior); // prior unchanged since D unchanged
+			if (E_trial<E) {
+				//accept
+				E = E_trial;
+				log_like = log_like_trial;
+				t0_success++;
+				t0 = new_t0;
+			} else {
+				crit = exp( -(E_trial-E)/T );
+				if (gsl_ran_flat(twister,0,1)<crit) {
+					E = E_trial;
+					log_like = log_like_trial;
+					t0_success++;
+					t0 = new_t0;
+				}
+			}
+
+		}
+
+#endif // OFFSET
 		if (step%nprint==0) {
 			sum_P = 0.0;
 			for (int i=0; i<nbin; i++) {
@@ -741,6 +803,12 @@ int main(int argc, char **argv)
 			for (int i=0; i<nbin_D; i++) {
 				fprintf(outp,"%12.6e ",DQ[i]);
 			}
+			//
+			// always add new stuff at the end!
+			//
+			if (t0_offset) {
+				fprintf(outp,"%12.6e ",t0);
+			}
 			fprintf(outp,"\n");
 		}
 	}
@@ -749,6 +817,9 @@ int main(int argc, char **argv)
 	fprintf(stdout,"       Fraction D moves accepted = %12.6f\n", double(D_success)/double(D_try));
 	fprintf(stdout,"       Fraction F moves accepted = %12.6f\n", double(F_success)/double(F_try));
 	fprintf(stdout,"Fraction global D moves accepted = %12.6f\n", double(D_glob_success)/double(D_glob_try));
+	if (t0_offset) {
+		fprintf(stdout,"Fraction t0 moves accepted = %12.6f\n", double(t0_success)/double(t0_try));
+	}
 	fprintf(stdout,"================================================================================\n" );
 
 	if (propagator_file != NONE) {
@@ -777,6 +848,10 @@ int main(int argc, char **argv)
 		for (int i=0; i<nbin_D; i++) 
 			fwrite(&DQ[i],sizeof(double),1,outp);
 			//fprintf(outp,"%12.6e\n",DQ[i]);
+		//
+		// add new stuff to the end of file to retain backwards compatibility...
+		//
+		fwrite(&t0,sizeof(double),1,outp);
 		fclose(outp);
 	}
 

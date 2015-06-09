@@ -32,6 +32,8 @@ const string Usage = "\n\
 			-t dt = time step for constructing Markov matrix (an integer!)\n\
 			-o outp.dat = output matrix\n\
 			-C [optional] : center data in bins\n\
+			-d [optional] : symmetrize count matrix\n\
+			           (i.e. assume detailed balance)\n\
 			";
 
 void minmax(const string &ifile, int col, double &lo, double &hi)
@@ -72,6 +74,21 @@ void minmax(const string &ifile, int col, double &lo, double &hi)
 	}
 	inp.close();
 	return;
+}
+
+void symmetrize_counts(vector<vector<int> > &hist)
+{
+	int count_ij_ji;
+	int nbin = hist.size();
+	for (int i=0; i<nbin; i++) {
+		for (int j=i; j<nbin; j++) {
+			count_ij_ji  = hist[i][j];
+			count_ij_ji += hist[j][i];
+			hist[i][j] = count_ij_ji;
+			hist[j][i] = count_ij_ji;
+		}
+	}
+
 }
 
 void bin_transitions(const string &ifile, vector<vector<int> > &hist, int col, double lo,
@@ -202,7 +219,7 @@ int main(int argc, char *argv[])
 	vector<vector<int> > hist;
 	int nbin, nfile, col, dt, c;
 	double lo, hi,tscale,k1,q1;
-	bool centre_data,gh;
+	bool centre_data,gh,detbal;
 	string ofile;
 	dt = 1;
 	nbin = 50;
@@ -211,11 +228,12 @@ int main(int argc, char *argv[])
 	col = 1;
 	ofile = "junk.dat";
 	centre_data = false;
+	detbal=false;
 	k1 = q1 =0;	// default: no umbrella
 	tscale = 1.0;	// time between saved values of coordinate
 	gh = false;
 	while (1) {
-		c=getopt(argc,argv,"hc:L:H:n:o:t:Cs:k:q:g");
+		c=getopt(argc,argv,"hc:L:H:n:o:t:Cs:k:q:gd");
 		if (c == -1)	// no more options
 			break;
 		switch (c) {
@@ -256,6 +274,9 @@ int main(int argc, char *argv[])
 			case 'g':
 				gh = true;
 				break;
+			case 'd':
+				detbal = true;
+				break;
 			default:
 				fprintf(stderr,"?? getopt returned character %c ??\n", c);
 				fprintf(stderr,"%s\n",Usage.c_str());
@@ -290,6 +311,9 @@ int main(int argc, char *argv[])
 	for (int i=0; i<nfile; i++) 
 		bin_transitions(files[i], hist, col, lo, hi, nbin, dt, centre_data);
 
+	if (detbal) {
+		symmetrize_counts(hist);
+	}
 	/*write_mat(ofile, lo, hi, nbin, dt, hist);*/
 	if (gh) {
 		write_sqmat(ofile,hist);

@@ -31,7 +31,7 @@ void parse_cmd(const int largc, char **largv, double& D0,
 {
 	// defaults
 	string NONE = "none";
-	D0 = 1.0;			// initial guess at D
+	D0 = -1.0; // default, i.e. not set!
 	dD = 0.01;			// scale for random moves in ln(D)
 	dF = 0.01;			// scale for random moves in F
 	nsteps = 10000;			// number of mc steps
@@ -396,6 +396,7 @@ int main(int argc, char **argv)
 	double lag;
 	gsl_rng *twister;
 
+	D0 = -1.0;
 	parse_cmd(argc, argv, D0, dD, dF, stiffness, nsteps, nprint, 
 			outp_name, mat_files, restart_file, restart_save_file,
 			propagator_file,
@@ -457,6 +458,12 @@ int main(int argc, char **argv)
 	for (int i=0; i<nbin; i++) {
 		Peq[i] /= sum_P;
 	}
+	// if D0 set, replace all D's by const D
+	for (int i=0; i< DQ.size(); i++) {
+		DQ[i] = D0;
+	}
+	
+	
 	build_K_1D(Keq,Peq,DQ,nbin,pbc,dQ);
 	// do this to get eigenvalues
 	calc_propagators(Keq, expKt, Peq, nbin, lag,
