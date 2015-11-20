@@ -459,8 +459,10 @@ int main(int argc, char **argv)
 		Peq[i] /= sum_P;
 	}
 	// if D0 set, replace all D's by const D
-	for (int i=0; i< DQ.size(); i++) {
-		DQ[i] = D0;
+	if (D0 > 0.) {
+		for (int i=0; i< DQ.size(); i++) {
+			DQ[i] = D0;
+		}
 	}
 	
 	
