@@ -1,4 +1,7 @@
 
+Installation notes:
+* Requires GNU Scientific Library for RNG.
+
 brumbrella.cc		: 1D BD simulation code, on bistable potential,
 			: with optional umbrella potential
 
@@ -10,7 +13,14 @@ diffit.cc		: master code for 1D diffusive fits
 thist.cc		: code for constructing transition matrices "oven-ready"
 			: for input to diffit
 
-test_umbrella.csh	: a helpful example
+example_fit.csh		: a helpful example of fitting data from long
+			 simulations at equilibrium, no bias/umbrella
+			- generates brownian dynamics data
+			- bins it into transition matrix
+			- fits diffusion model
+
+test_umbrella.csh	: a less helpful example but which nonetheless
+			illustrates more of the code's functionality
 
 
 
