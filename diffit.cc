@@ -169,6 +169,12 @@ void parse_cmd(const int largc, char **largv, double& D0,
 	if (propagator_file != NONE) {
 		fprintf(stdout," Saving final propagators to: %s\n",propagator_file.c_str());
 	}
+	if (pbc) {
+		fprintf(stdout,"Using periodic boundaries\n");
+	} else {
+		fprintf(stdout,"Not using periodic boundaries\n");
+	}
+
 	fprintf(stdout,"==================================================\n");
 #endif // VERBOSE
 	return;
@@ -709,7 +715,7 @@ int main(int argc, char **argv)
 #ifdef GLOBALMOVES
 		// then D (global scaling of all D)
 		D_glob_try++;
-		double global_fudge = 0.1;
+		double global_fudge = 0.1/sqrt(float(nbin));
 		global_scale = exp(gsl_ran_flat(twister,-dD*global_fudge,dD*global_fudge));
 		for (int q=0; q<nbin_D;q++) {
 			DQ[q] *= global_scale; 

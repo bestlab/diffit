@@ -34,7 +34,13 @@ const string Usage = "\n\
 			-C [optional] : center data in bins\n\
 			-d [optional] : symmetrize count matrix\n\
 			           (i.e. assume detailed balance)\n\
+			-p [optional] : assume periodic boundaries with box L = hi-lo\n\
 			";
+
+int positive_mod(int a, int b) {
+	int c = a % b;  // but c may still actually be -(a%b), so...
+	return (c < 0) ? c + b : c ; 
+}
 
 void minmax(const string &ifile, int col, double &lo, double &hi)
 {
@@ -92,7 +98,7 @@ void symmetrize_counts(vector<vector<int> > &hist)
 }
 
 void bin_transitions(const string &ifile, vector<vector<int> > &hist, int col, double lo,
-		double hi, int nbin, int dt, bool centre_data)
+		double hi, int nbin, int dt, bool centre_data, bool pbc)
 {
 	double dQ, Qi, Qj, Qic, Qjc;
 	vector<double> Qbuf;
@@ -152,10 +158,13 @@ void bin_transitions(const string &ifile, vector<vector<int> > &hist, int col, d
 			bin_i = int(floor((Qi-lo)/dQ));
 			bin_j = int(floor((Qj-lo)/dQ));
 		}
-		if (bin_i>=0 && bin_i<nbin && bin_j>=0 && bin_j<nbin) {
+		if (pbc) {
+			bin_i = positive_mod(bin_i,nbin);
+			bin_j = positive_mod(bin_j,nbin);
+			hist[bin_i][bin_j]++;
+		} else if (bin_i>=0 && bin_i<nbin && bin_j>=0 && bin_j<nbin) {
 			hist[bin_i][bin_j]++;
 		}
-		//cout << "xx: " << tmpf << endl;
 		inp.getline(buf,buf_len,'\n');
 	}
 	inp.close();
@@ -219,7 +228,7 @@ int main(int argc, char *argv[])
 	vector<vector<int> > hist;
 	int nbin, nfile, col, dt, c;
 	double lo, hi,tscale,k1,q1;
-	bool centre_data,gh,detbal;
+	bool centre_data,gh,detbal,pbc;
 	string ofile;
 	dt = 1;
 	nbin = 50;
@@ -232,8 +241,9 @@ int main(int argc, char *argv[])
 	k1 = q1 =0;	// default: no umbrella
 	tscale = 1.0;	// time between saved values of coordinate
 	gh = false;
+	pbc = false; 
 	while (1) {
-		c=getopt(argc,argv,"hc:L:H:n:o:t:Cs:k:q:gd");
+		c=getopt(argc,argv,"hc:L:H:n:o:t:Cs:k:q:gdp");
 		if (c == -1)	// no more options
 			break;
 		switch (c) {
@@ -277,6 +287,9 @@ int main(int argc, char *argv[])
 			case 'd':
 				detbal = true;
 				break;
+			case 'p':
+				pbc = true;
+				break;
 			default:
 				fprintf(stderr,"?? getopt returned character %c ??\n", c);
 				fprintf(stderr,"%s\n",Usage.c_str());
@@ -309,7 +322,7 @@ int main(int argc, char *argv[])
 	fprintf(stdout,"==========================================================\n");
 
 	for (int i=0; i<nfile; i++) 
-		bin_transitions(files[i], hist, col, lo, hi, nbin, dt, centre_data);
+		bin_transitions(files[i], hist, col, lo, hi, nbin, dt, centre_data, pbc);
 
 	if (detbal) {
 		symmetrize_counts(hist);
