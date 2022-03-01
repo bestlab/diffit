@@ -1,11 +1,20 @@
 
-TARGETS=brumbrella thist diffit propagators 1d_diff diffit_cred.py
+TARGETS=brumbrella thist diffit propagators 1d_diff 
 # gogo
 #CFLAGS= 
 #LDFLAGS=-lgsl -lgslcblas
 # bigmac
-CFLAGS=-I/opt/local/include
-LDFLAGS=-lgsl -L/opt/local/lib -lgsl -lgslcblas
+#CFLAGS=-I/opt/local/include -pg 
+#LDFLAGS=-lgsl -L/opt/local/lib -lgsl -lgslcblas -pg
+
+
+# use these for openblas:
+#
+CFLAGS=-I/home/robertbe/include -pg 
+#LDFLAGS=-lgsl -L/opt/local/lib -lgsl -lgslcblas -pg
+# openblas gives a small speedup ... can also run in parallel but that doesn't help
+# unless using a really fine discretization.
+LDFLAGS=-lgsl -L/home/robertbe/lib  -lgsl -lopenblas -lpthread -lgfortran -pg
 OPT=-O3
 
 all: $(TARGETS)
