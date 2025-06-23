@@ -26,6 +26,7 @@ const string Usage = "\n\
 		thist -c col -L lo -H hi -n nbin -o outp.dat -t dt [-C] rx1.dat ... rxN.dat\n\
 			rx1...rxN.dat = files with reaction coordinate data\n\
 			-c col = column in rx1...rxN.dat to take rc data from\n\
+			-x col = column in rx1...rxN.dat indicating data to include (1 to include, 0 to exclude)\n\
 			-L lo  = lower histogram bound\n\
 			-H hi = upper histogram bound\n\
 			-n nbin = number of bins in histogram\n\
@@ -98,17 +99,20 @@ void symmetrize_counts(vector<vector<int> > &hist)
 }
 
 void bin_transitions(const string &ifile, vector<vector<int> > &hist, int col, double lo,
-		double hi, int nbin, int dt, bool centre_data, bool pbc)
+		double hi, int nbin, int dt, bool centre_data, bool pbc, const string &xfile, int xcol=-1)
 {
 	double dQ, Qi, Qj, Qic, Qjc;
+    int xi, xj;
 	vector<double> Qbuf;
-	ifstream inp;
+	vector<int> xbuf;
+	ifstream inp,xinp;
 	const int buf_len = 1024;
 	char buf[buf_len];
 	string tmps;
 	double tmpf;
 	int dim, Qptr, bin_i, bin_j;
 	Qbuf.resize(dt);
+	xbuf.resize(dt);
 	if (hist.size() != nbin) {
 		hist.resize(nbin);
 		for (int i=0;i<nbin;i++) {
@@ -133,39 +137,70 @@ void bin_transitions(const string &ifile, vector<vector<int> > &hist, int col, d
 	inp.close();
 	inp.clear();
 	inp.open(ifile.c_str());
+    //
+    // will just assume xinp is of same length!
+    if (xcol>0) {
+        xinp.open(xfile.c_str());
+        if (!xinp.good()) {
+            fprintf(stderr,"Could not open file %s to read data\n",xfile.c_str());
+            exit(1);
+        }
+    }
+    //
 	for (int i=0; i<dt; i++) {	// fill Qbuf
 		for (int t=1; t<col; t++)
 			inp >> tmps;
 		inp >> Qbuf[i];
 		inp.getline(buf,buf_len,'\n');
+        if (xcol>0) {
+            for (int t=1; t<xcol; t++)
+                xinp >> tmps;
+            xinp >> xbuf[i];
+            xinp.getline(buf,buf_len,'\n');
+        }
 	}
 	Qptr = 0;
 	for (int i=0; i<dim-dt; i++) {
+
 		for (int t=1; t<col; t++)
 			inp >> tmps;
 		inp >> Qi;
+		inp.getline(buf,buf_len,'\n');
 		Qj = Qbuf[Qptr];
 		Qbuf[Qptr] = Qi;
+        // check if we want to bin this data
+        xi = xj = 1;
+        if (xcol>0) {
+		    for (int t=1; t<xcol; t++)
+		    	xinp >> tmps;
+		    xinp >> xi;
+		    xinp.getline(buf,buf_len,'\n');
+		    xj = xbuf[Qptr];
+		    xbuf[Qptr] = xi;
+        }
+        //
 		Qptr++; 
-		if (Qptr >= dt)
-			Qptr = 0;
-		if (centre_data) {
-			bin_j = int(floor((Qj-lo)/dQ));
-			Qjc = lo + dQ*(float(bin_j)+0.5);
-			Qic = Qi + (Qjc-Qj);
-			bin_i = int(floor((Qic-lo)/dQ));
-		} else {
-			bin_i = int(floor((Qi-lo)/dQ));
-			bin_j = int(floor((Qj-lo)/dQ));
-		}
-		if (pbc) {
-			bin_i = positive_mod(bin_i,nbin);
-			bin_j = positive_mod(bin_j,nbin);
-			hist[bin_i][bin_j]++;
-		} else if (bin_i>=0 && bin_i<nbin && bin_j>=0 && bin_j<nbin) {
-			hist[bin_i][bin_j]++;
-		}
-		inp.getline(buf,buf_len,'\n');
+        if (Qptr >= dt)
+            Qptr = 0;
+        //
+        if (xi==1 and xj==1) {
+            if (centre_data) {
+                bin_j = int(floor((Qj-lo)/dQ));
+                Qjc = lo + dQ*(float(bin_j)+0.5);
+                Qic = Qi + (Qjc-Qj);
+                bin_i = int(floor((Qic-lo)/dQ));
+            } else {
+                bin_i = int(floor((Qi-lo)/dQ));
+                bin_j = int(floor((Qj-lo)/dQ));
+            }
+            if (pbc) {
+                bin_i = positive_mod(bin_i,nbin);
+                bin_j = positive_mod(bin_j,nbin);
+                hist[bin_i][bin_j]++;
+            } else if (bin_i>=0 && bin_i<nbin && bin_j>=0 && bin_j<nbin) {
+                hist[bin_i][bin_j]++;
+            }
+        }
 	}
 	inp.close();
 	return;
@@ -226,7 +261,7 @@ int main(int argc, char *argv[])
 {
 	vector<string> files;
 	vector<vector<int> > hist;
-	int nbin, nfile, col, dt, c;
+	int nbin, nfile, col, xcol, dt, c;
 	double lo, hi,tscale,k1,q1;
 	bool centre_data,gh,detbal,pbc;
 	string ofile;
@@ -235,6 +270,7 @@ int main(int argc, char *argv[])
 	//lo = 0.0; hi = 1.0;
 	lo = 1.0; hi = 0.0;
 	col = 1;
+	xcol = -1;
 	ofile = "junk.dat";
 	centre_data = false;
 	detbal=false;
@@ -243,7 +279,7 @@ int main(int argc, char *argv[])
 	gh = false;
 	pbc = false; 
 	while (1) {
-		c=getopt(argc,argv,"hc:L:H:n:o:t:Cs:k:q:gdp");
+		c=getopt(argc,argv,"hc:x:L:H:n:o:t:Cs:k:q:gdp");
 		if (c == -1)	// no more options
 			break;
 		switch (c) {
@@ -265,6 +301,9 @@ int main(int argc, char *argv[])
 				break;
 			case 'c':
 				col = atoi(optarg);
+				break;
+			case 'x':
+				xcol = atoi(optarg);
 				break;
 			case 'n':
 				nbin = atoi(optarg);
@@ -322,7 +361,7 @@ int main(int argc, char *argv[])
 	fprintf(stdout,"==========================================================\n");
 
 	for (int i=0; i<nfile; i++) 
-		bin_transitions(files[i], hist, col, lo, hi, nbin, dt, centre_data, pbc);
+		bin_transitions(files[i], hist, col, lo, hi, nbin, dt, centre_data, pbc,files[i],xcol);
 
 	if (detbal) {
 		symmetrize_counts(hist);
