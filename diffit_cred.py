@@ -1,6 +1,6 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
-import sys,math
+import sys,math,functools
 
 def block_err(data,nblock):
 	ndat = len(data) 
