@@ -1,4 +1,5 @@
 
+
 Installation notes:
 * Requires GNU Scientific Library for RNG.
 
@@ -22,5 +23,27 @@ example_fit.csh		: a helpful example of fitting data from long
 test_umbrella.csh	: a less helpful example but which nonetheless
 			illustrates more of the code's functionality
 
+
+Claude produces this summary which is pretty on the mark(!):
+
+This project is a toolkit for fitting 1D diffusion models to molecular simulation trajectories.
+  Specifically:
+
+  - diffit — the main program. It performs a maximum-likelihood fit of a position-dependent diffusion
+  coefficient D(x) and free energy profile F(x) to data from molecular dynamics or Brownian dynamics
+  simulations. It uses Monte Carlo optimization (with GSL) to find the best-fit parameters.
+  - thist — preprocesses simulation trajectories into transition matrices (count matrices of how often
+  the system moves between bins), which are the input format for diffit.
+  - brumbrella — a 1D Brownian dynamics (BD) simulation engine that can run on a bistable potential,
+  optionally with an umbrella (biasing) potential for enhanced sampling.
+  - 1d_diff — appears to be a related 1D diffusion utility.
+  - propagators — computes propagators (transition probability matrices) from the fitted model.
+  - credibility.py / diffit_cred.py — Python scripts, likely for assessing fit quality or credibility
+  intervals.
+
+  In short: you run a simulation (or use existing trajectory data), bin it into a transition matrix with
+  thist, then use diffit to extract a spatially-varying diffusion coefficient and free energy profile —
+  the classic Hummer/Szabo-style Bayesian/maximum-likelihood approach for inferring kinetics from
+  equilibrium or biased simulations along a 1D reaction coordinate.
 
 
